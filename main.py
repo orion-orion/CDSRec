@@ -31,7 +31,7 @@ def arg_parse():
     parser.add_argument("--epochs", type=int, default=60, help="number of training epochs")
     parser.add_argument("--optimizer", type=str, default="Adam", help="type of the optimizer. possible are \
         `Adam`,`RMSProp`, `AdaGrad`, `SGD`")    
-    parser.add_argument("--lr", type=float, default=0.001, help="applies to Adam.")
+    parser.add_argument("--lr", type=float, default=0.001, help="initial learning rate")
     parser.add_argument("--batch_size", type=int, default=128, help="training batch size")     
     parser.add_argument("--eval_interval", type=int, default=1, help="interval of evalution")
     parser.add_argument("--dropout_rate", default=0.2, type=float, help="dropout rate")        
