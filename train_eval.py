@@ -5,7 +5,8 @@ import copy
 from collections import defaultdict
 import numpy as np
 import tensorflow as tf
-from data_utils import compute_rel_pos, split_A_and_B, get_ui_and_labels, align_A_and_B, get_eval_ui, get_predictions 
+from data_utils import compute_rel_pos, split_A_and_B, get_ui_and_labels, align_A_and_B, get_eval_ui, get_predictions, \
+    stack_index_and_pos
 
 
 def train(model, train_dataloader, valid_dataloader, test_dataloader, args):   
@@ -31,18 +32,25 @@ def train(model, train_dataloader, valid_dataloader, test_dataloader, args):
                     _, l, = sess.run([model.train_op_joint, model.loss_joint], \
                     {model.input_A: ui_A, model.label_A: labels_A, \
                         model.input_B: ui_B, model.label_B: labels_B})
+                elif args.method == "PINet":          
+                    seqs_A, seqs_B, positions_A, positions_B, lens_A, lens_B, grounds_A, grounds_B = sessions
+                    positions_A = stack_index_and_pos(positions_A)
+                    positions_B = stack_index_and_pos(positions_B)                              
+                    _, l = sess.run([model.train_op, model.loss], {model.seq_A: seqs_A, model.seq_B: seqs_B, \
+                        model.pos_A: positions_A, model.pos_B: positions_B, model.len_A: lens_A, model.len_B: lens_B, \
+                            model.ground_truth_A: grounds_A, model.ground_truth_B: grounds_B})
                 loss += l
                 step += 1
             gc.collect()
             logging.info('Epoch {}/{} - Training Loss: {:.3f}'.format(epoch + 1, args.epochs, loss / step))
-            if epoch % args.eval_interval == 0 and epoch > 10: 
-                val_metrics_A, val_metrics_B = evaluate(model, sess, valid_dataloader, args, mod="valid")
+            if epoch % args.eval_interval == 0 and epoch > 10:
+                val_metrics_A, val_metrics_B = evaluate(model, sess, valid_dataloader, args, mode="valid")
                 if val_metrics_A["MRR10"] + val_metrics_B["MRR10"] > max(val_res_history):
-                    evaluate(model, sess, test_dataloader, args, mod="test")   
+                    evaluate(model, sess, test_dataloader, args, mode="test")   
                 val_res_history.append(val_metrics_A["MRR10"] + val_metrics_B["MRR10"])
 
 
-def evaluate(model, sess, dataloader, args, mod="valid"):
+def evaluate(model, sess, dataloader, args, mode="valid"):
     eval_metrics_A = {
         "MRR1": 0.0, "MRR5": 0.0, "MRR10": 0.0, 
         "HR1": 0.0, "HR5": 0.0, "HR10": 0.0, 
@@ -57,7 +65,7 @@ def evaluate(model, sess, dataloader, args, mod="valid"):
             predictions = sess.run(model.test_logits, \
             {model.input_seq: seqs, model.time_matrix: compute_rel_pos(seqs.shape[0], seqs.shape[1]), model.is_training: False})
             predictions_A, predictions_B, grounds_A, grounds_B, neg_samples_A, neg_samples_B = \
-                split_A_and_B(predictions, ground_truths, neg_samples, dataloader.num_items_A)
+                split_A_and_B(predictions, ground_truths, neg_samples, method="TiSASRec", num_items_A=dataloader.num_items_A)
         elif args.method == "CoNet":
             grounds_A, grounds_B, neg_samples_A, neg_samples_B = sessions
             ui_A = get_eval_ui(user_ids, grounds_A, neg_samples_A)
@@ -65,8 +73,17 @@ def evaluate(model, sess, dataloader, args, mod="valid"):
             ui_preds_A = sess.run(model.logits_A_only, {model.input_A: ui_A})
             ui_preds_B = sess.run(model.logits_B_only, {model.input_B: ui_B})
             predictions_A = get_predictions(ui_A, ui_preds_A)
-            predictions_B = get_predictions(ui_B, ui_preds_B)         
-
+            predictions_B = get_predictions(ui_B, ui_preds_B)
+        elif args.method == "PINet":   
+            seqs_A, seqs_B, positions_A, positions_B, lens_A, lens_B, A_or_B, ground_truths, neg_samples = sessions            
+            positions_A = stack_index_and_pos(positions_A)
+            positions_B = stack_index_and_pos(positions_B)
+            predictions_A, predictions_B = sess.run([model.logits_A, model.logits_B], {model.seq_A: seqs_A, model.seq_B: seqs_B, \
+                model.pos_A: positions_A, model.pos_B: positions_B, model.len_A: lens_A, model.len_B: lens_B, \
+                   model.ground_truth_A: ground_truths, model.ground_truth_B: ground_truths})
+            predictions_A, predictions_B, grounds_A, grounds_B, neg_samples_A, neg_samples_B = \
+                split_A_and_B((predictions_A, predictions_B), ground_truths, neg_samples, method="PINet", A_or_B=A_or_B)                 
+            
         batch_eval_metrics_A = compute_eval_result(user_ids, predictions_A, grounds_A, neg_samples_A, k_list=[1, 5, 10], method=args.method)
         batch_eval_metrics_B = compute_eval_result(user_ids, predictions_B, grounds_B, neg_samples_B, k_list=[1, 5, 10], method=args.method)
         # The evaluation results are sumed up before averaging
@@ -83,7 +100,7 @@ def evaluate(model, sess, dataloader, args, mod="valid"):
         eval_metrics_A[key] /= num_samples_A
         eval_metrics_B[key] /= num_samples_B   
 
-    if mod == "valid":
+    if mode == "valid":
         logging.info('Valid:')
     else:
         logging.info('Test:')

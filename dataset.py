@@ -45,6 +45,7 @@ class CDSDataSet(object):
             for line in f.readlines():
                 session = []
                 line = line.strip().split("\t")
+                # Note that the ground truth is included when computing the sequence lengths of domain A and domain B
                 seq_len_A, seq_len_B = 0, 0
                 for item in line[1:]: # Start from index 1 to exclude user ID
                     item = int(item)
@@ -203,6 +204,13 @@ class CDSDataSet(object):
                 items_input, ground_truth_A, ground_truth_B = session[:-2], session[-2], session[-1]
             else:
                 items_input, ground_truth = session[:-1], session[-1]
+                # If the ground truth is in domain A
+                if ground_truth < self.num_items_A:
+                    # Exclude the ground truth A when computing the sequence length of domain A
+                    self.seq_lens_A[idx] -= 1 
+                else: # If the ground truth is in domain B
+                    # Exclude the ground truth B when computing the sequence length of domain B
+                    self.seq_lens_B[idx] -= 1
             
             seq_A, seq_B, pos_A, pos_B = [], [], [], []
             len_A, len_B = 0, 0
@@ -212,7 +220,7 @@ class CDSDataSet(object):
                     pos_A.append(len_B)
                     len_A += 1
                 else:
-                    seq_B.append(item)
+                    seq_B.append(item - self.num_items_A)
                     pos_B.append(len_A)
                     len_B += 1
                     
@@ -221,7 +229,7 @@ class CDSDataSet(object):
             temp.append(pos_A + [0] * (self.max_seq_len_A - self.seq_lens_A[idx]))
             temp.append(pos_B + [0] * (self.max_seq_len_B - self.seq_lens_B[idx]))
             temp.append(len_A)
-            temp.append(len_B)          
+            temp.append(len_B)
             
             if mode == "train":
                 temp.append(ground_truth_A) # The ground truth for domain A
@@ -241,7 +249,7 @@ class CDSDataSet(object):
                         neg_sample = self.random_neg(0, self.num_items_A, excl=[ground_truth])
                     else:
                         neg_sample = self.random_neg(0, self.num_items_B, excl=[ground_truth - self.num_items_A])
-                    neg_samples.append(neg_sample)                
+                    neg_samples.append(neg_sample)
                 temp.append(neg_samples)
             prep_sessions.append(temp)
         return prep_sessions

@@ -12,19 +12,29 @@ def compute_rel_pos(batch_size, seq_len):
     return np.stack([time_matrix] * batch_size, axis=0)
 
 
-def split_A_and_B(predictions, ground_truths, neg_samples, num_items_A):
-    A_or_B = np.where(ground_truths < num_items_A, 0, 1)
+def split_A_and_B(predictions, ground_truths, neg_samples, method="TiSASRec", num_items_A=0, A_or_B=None):
+    if method == "TiSASRec":
+        A_or_B = np.where(ground_truths < num_items_A, 0, 1)
+    else:
+        predictions = zip(*predictions)
+    
     predictions_A, predictions_B = [], []
     grounds_A, grounds_B = [], []
     neg_samples_A, neg_samples_B = [], []
     for item_predictions, ground_truth, item_neg_samples, is_A_or_B in zip(predictions, ground_truths, \
         neg_samples, A_or_B):
         if is_A_or_B == 0:
-            predictions_A.append(item_predictions)
+            if method == "TiSASRec":
+                predictions_A.append(item_predictions)
+            else:
+                predictions_A.append(item_predictions[0])
             grounds_A.append(ground_truth)
-            neg_samples_A.append(item_neg_samples)
+            neg_samples_A.append(item_neg_samples)                
         else:
-            predictions_B.append(item_predictions)
+            if method == "TiSASRec":
+                predictions_B.append(item_predictions)                
+            else:
+                predictions_B.append(item_predictions[1])                
             grounds_B.append(ground_truth)
             neg_samples_B.append(item_neg_samples)
     return np.array(predictions_A), np.array(predictions_B), np.array(grounds_A), np.array(grounds_B), \
@@ -80,3 +90,11 @@ def get_predictions(ui, ui_preds):
         user, item = ui[0], ui[1]
         predictions[user][item] = pred[0]
     return predictions
+
+
+def stack_index_and_pos(positions):
+    index = np.arange(positions.shape[0])
+    index = np.expand_dims(index, axis=-1)
+    index_p = np.repeat(index, positions.shape[1], axis=1)
+    positions = np.stack([index_p, positions], axis=-1)
+    return positions
