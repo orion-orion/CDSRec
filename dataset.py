@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import random
 import numpy as np
@@ -136,30 +137,42 @@ class CDSDataSet(object):
                     session_A.append(item)
                 else:
                     session_B.append(item - self.num_items_A)
-            temp.append(session_A + [self.pad_int] * (self.max_seq_len_A - self.seq_lens_A[idx]))
-            temp.append(session_B + [self.pad_int] * (self.max_seq_len_B - self.seq_lens_B[idx]))
             if mode == "train":
+                temp.append(session_A + [self.pad_int] * (self.max_seq_len_A - self.seq_lens_A[idx]))
+                temp.append(session_B + [self.pad_int] * (self.max_seq_len_B - self.seq_lens_B[idx]))                
                 num_neg = self.conet_params["num_train_neg"]
+                neg_samples_A = []
+                for item_A in session_A:
+                    item_neg_samples = []
+                    for _ in range(num_neg):
+                        # Negative samples must be generated in the corresponding domain
+                        neg_sample = self.random_neg(0, self.num_items_A, [item_A])
+                        item_neg_samples.append(neg_sample)            
+                    neg_samples_A.append(item_neg_samples)
+                temp.append(neg_samples_A + [[0] * num_neg] * (self.max_seq_len_A - self.seq_lens_A[idx]))
+                neg_samples_B = []
+                for item_B in session_B:
+                    item_neg_samples = []
+                    for _ in range(self.conet_params["num_train_neg"]):
+                        # Negative samples must be generated in the corresponding domain
+                        neg_sample = self.random_neg(0, self.num_items_B, [item_B - self.num_items_A])
+                        item_neg_samples.append(neg_sample)            
+                    neg_samples_B.append(item_neg_samples)
+                temp.append(neg_samples_B + [[0] * num_neg] * (self.max_seq_len_B - self.seq_lens_B[idx]))                                 
             else:
                 num_neg = self.conet_params["num_test_neg"]
-            neg_samples_A = []
-            for item_A in session_A:
-                item_neg_samples = []
+                ground_truth_A, ground_truth_B = session_A[-1], session_B[-1]
+                temp.append(ground_truth_A)
+                temp.append(ground_truth_B)
+                neg_samples_A, neg_samples_B = [], []
                 for _ in range(num_neg):
                     # Negative samples must be generated in the corresponding domain
-                    neg_sample = self.random_neg(0, self.num_items_A, [item_A])
-                    item_neg_samples.append(neg_sample)            
-                neg_samples_A.append(item_neg_samples)
-            temp.append(neg_samples_A + [[0] * num_neg] * (self.max_seq_len_A - self.seq_lens_A[idx]))
-            neg_samples_B = []
-            for item_B in session_B:
-                item_neg_samples = []
-                for _ in range(num_neg):
-                    # Negative samples must be generated in the corresponding domain
-                    neg_sample = self.random_neg(0, self.num_items_B, [item_B - self.num_items_A])
-                    item_neg_samples.append(neg_sample)            
-                neg_samples_B.append(item_neg_samples)
-            temp.append(neg_samples_B + [[0] * num_neg] * (self.max_seq_len_B - self.seq_lens_B[idx]))                                 
+                    neg_sample_A = self.random_neg(0, self.num_items_A, [ground_truth_A])
+                    neg_sample_B = self.random_neg(0, self.num_items_B, [ground_truth_B])
+                    neg_samples_A.append(neg_sample_A)   
+                    neg_samples_B.append(neg_sample_B)
+                temp.append(neg_samples_A)
+                temp.append(neg_samples_B)
             prep_sessions.append(temp)
         return prep_sessions 
 

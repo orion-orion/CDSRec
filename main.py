@@ -8,6 +8,7 @@ import numpy as np
 import tensorflow as tf
 from dataset import CDSDataSet, Dataloader
 from tisasrec.tisasrec_model import TiSASRec
+from conet.conet_model import CoNet
 from train_eval import train
 
 
@@ -80,11 +81,15 @@ def main():
     valid_dataloader = Dataloader(valid_dataset , batch_size=args.batch_size, shuffle=True)
     test_dataloader = Dataloader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-    num_items = train_dataset.num_items_A + train_dataset.num_items_B
+    num_users = train_dataset.num_users
+    num_items_A = train_dataset.num_items_A
+    num_items_B = train_dataset.num_items_B
     if args.method == "TiSASRec":       
         # max_seq_len is for positional encoding in TiSASRec
         max_seq_len = max(train_dataset.max_seq_len, valid_dataset.max_seq_len, test_dataset.max_seq_len)
-        model = TiSASRec(num_items, max_seq_len, args)
+        model = TiSASRec(num_items_A + num_items_B, max_seq_len, args)
+    elif args.method == "CoNet":
+        model = CoNet(num_users, num_items_A, num_items_B, args)      
     
     train(model, train_dataloader, valid_dataloader, test_dataloader, args)
 
