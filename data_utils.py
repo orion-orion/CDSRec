@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-import numpy as np
+import random
 from collections import defaultdict
+import numpy as np
+from kg_utils import get_neighbours1
 
 
 def compute_rel_pos(batch_size, seq_len):    
@@ -92,9 +94,113 @@ def get_predictions(ui, ui_preds):
     return predictions
 
 
-def stack_index_and_pos(positions):
-    index = np.arange(positions.shape[0])
-    index = np.expand_dims(index, axis=-1)
-    index_p = np.repeat(index, positions.shape[1], axis=1)
-    positions = np.stack([index_p, positions], axis=-1)
-    return positions
+def stack_with_indexes(*input_matrixs):
+    # indexes indicate the indexes of the samples in the batch    
+    indexes = np.arange(input_matrixs[0].shape[0])
+    indexes = np.expand_dims(indexes, axis=-1)
+    new_matrixs = []
+    for input_matrix in input_matrixs:
+        indexes_matrix = np.repeat(indexes, input_matrix.shape[1], axis=1)
+        new_matrixs.append(np.stack([indexes_matrix, input_matrix], axis=-1))
+    return new_matrixs
+
+
+def unpack_tisasrec_sessions(model, sessions, mode="train"):
+    is_training = (True if mode == "train" else False)
+    if mode == "train":
+        seqs, pos_samples, neg_samples = sessions 
+        feed_dict = {model.input_seq: seqs, model.time_matrix: compute_rel_pos(seqs.shape[0], seqs.shape[1]), \
+                                model.pos_samples: pos_samples, model.neg_samples: neg_samples, model.is_training: is_training}
+        return feed_dict
+    else:
+        seqs, ground_truths, neg_samples = sessions
+        feed_dict = {model.input_seq: seqs, model.time_matrix: compute_rel_pos(seqs.shape[0], seqs.shape[1]), model.is_training: is_training}
+    return feed_dict, ground_truths, neg_samples
+
+
+def unpack_conet_sessions(model, sessions, user_ids, pad_int=0, mode="train"):
+    if mode == "train":
+        items_A, items_B, neg_samples_A, neg_samples_B = sessions
+        ui_A, labels_A = get_ui_and_labels(user_ids, items_A, neg_samples_A, pad_int)
+        ui_B, labels_B = get_ui_and_labels(user_ids, items_B, neg_samples_B, pad_int)
+        ui_A, labels_A, ui_B, labels_B = \
+            align_A_and_B(ui_A, labels_A, ui_B, labels_B) 
+        ui_A, labels_A = get_ui_and_labels(user_ids, items_A, neg_samples_A, pad_int)
+        ui_B, labels_B = get_ui_and_labels(user_ids, items_B, neg_samples_B, pad_int)
+        ui_A, labels_A, ui_B, labels_B = \
+            align_A_and_B(ui_A, labels_A, ui_B, labels_B)   
+        feed_dict = {model.input_A: ui_A, model.label_A: labels_A, \
+                model.input_B: ui_B, model.label_B: labels_B}
+        return feed_dict
+    else:
+        grounds_A, grounds_B, neg_samples_A, neg_samples_B = sessions
+        ui_A = get_eval_ui(user_ids, grounds_A, neg_samples_A)
+        ui_B = get_eval_ui(user_ids, grounds_B, neg_samples_B)
+        feed_dict_A, feed_dict_B = {model.input_A: ui_A}, {model.input_B: ui_B}
+    return feed_dict_A, feed_dict_B, grounds_A, grounds_B, neg_samples_A, neg_samples_B, ui_A, ui_B
+
+
+def unpack_pinet_sessions(model, sessions, mode="train"):
+    if mode == "train":          
+        seqs_A, seqs_B, positions_A, positions_B, lens_A, lens_B, grounds_A, grounds_B = sessions
+        positions_A, positions_B = stack_with_indexes(positions_A, positions_B)
+        feed_dict = {model.seq_A: seqs_A, model.seq_B: seqs_B, \
+            model.pos_A: positions_A, model.pos_B: positions_B, model.len_A: lens_A, model.len_B: lens_B, \
+                model.ground_truth_A: grounds_A, model.ground_truth_B: grounds_B}
+        return feed_dict  
+    else:
+        seqs_A, seqs_B, positions_A, positions_B, lens_A, lens_B, A_or_B, ground_truths, neg_samples = sessions
+        positions_A, positions_B = stack_with_indexes(positions_A, positions_B)
+        feed_dict = {model.seq_A: seqs_A, model.seq_B: seqs_B, model.pos_A: positions_A, model.pos_B: positions_B, \
+            model.len_A: lens_A, model.len_B: lens_B, model.ground_truth_A: ground_truths, model.ground_truth_B: ground_truths}
+        return feed_dict, A_or_B, ground_truths, neg_samples
+
+
+def unpack_mifn_sessions(model, sessions, num_items_A, num_items_B, mode="train"):
+    from mifn import config    
+    seqs_A, seqs_B, positions_A, positions_B, lens_A, lens_B, indexes_A, indexes_B, adjs_1, adjs_2, adjs_3, adjs_4, adjs_5 = sessions[: 13]
+    positions_A, positions_B, indexes_A, indexes_B = stack_with_indexes(positions_A, positions_B, indexes_A, indexes_B)
+    seqs = [np.concatenate([seq_A, seq_B], axis=0) for seq_A, seq_B in zip(seqs_A, seqs_B)]
+    if mode == "train":
+        grounds_A, grounds_B = sessions[13: 15]       
+        neighbors, nei_indexes_A, nei_indexes_B, nei_in_A, nei_in_B, _, nei_masks_A, nei_masks_B,  nei_masks_L_A, \
+        nei_masks_L_B, grounds_A_in_nei, grounds_B_in_nei = get_neighbours1(seqs, lens_A, lens_B, seqs_A, seqs_B, grounds_A, grounds_B, \
+            num_items_A, num_items_B, config.num_neighbors)
+        grounds_A_in_nei= np.expand_dims(grounds_A_in_nei,axis=1)
+        grounds_B_in_nei = np.expand_dims(grounds_B_in_nei,axis=1)
+        
+        feed_dict = {model.seq_A: seqs_A, model.seq_B: seqs_B, model.pos_A: positions_A, model.pos_B: positions_B,
+                     model.len_A: lens_A, model.len_B: lens_B, model.ground_truth_A: grounds_A, model.ground_truth_B: grounds_B,
+                     model.ground_A_in_nei: grounds_A_in_nei, model.ground_B_in_nei: grounds_B_in_nei,
+                     model.adj_1: adjs_1, model.adj_2: adjs_2, model.adj_3: adjs_3, model.adj_4: adjs_4, model.adj_5: adjs_5,
+                     model.neighbors: neighbors,
+                     model.index_A: indexes_A, model.index_B: indexes_B,
+                     model.nei_index_A: nei_indexes_A, model.nei_index_B: nei_indexes_B,
+                     model.nei_A_mask: nei_masks_A, model.nei_B_mask: nei_masks_B,
+                     model.nei_L_A_mask: nei_masks_L_A, model.nei_L_T_mask: nei_masks_L_B,
+                     model.nei_is_in_A: nei_in_A, model.nei_is_in_B: nei_in_B}
+        return feed_dict
+    else:
+        A_or_B, ground_truths, neg_samples = sessions[13: 16]        
+        neighbors, nei_indexes_A, nei_indexes_B, nei_in_A, nei_in_B, _, nei_masks_A, nei_masks_B, nei_masks_L_A, \
+        nei_masks_L_T, grounds_in_nei, _ = get_neighbours1(seqs, lens_A, lens_B, seqs_A, seqs_B, ground_truths, ground_truths, \
+            num_items_A, num_items_B, config.num_neighbors)
+        grounds_in_nei = np.expand_dims(grounds_in_nei, axis=1)
+
+        feed_dict = {model.seq_A: seqs_A, model.seq_B: seqs_B, model.pos_A: positions_A, model.pos_B: positions_B,
+                     model.len_A: lens_A, model.len_B: lens_B, model.ground_truth_A: ground_truths, model.ground_truth_B: ground_truths,
+                     model.ground_A_in_nei: grounds_in_nei, model.ground_B_in_nei: grounds_in_nei,
+                     model.adj_1: adjs_1, model.adj_2: adjs_2, model.adj_3: adjs_3, model.adj_4: adjs_4, model.adj_5: adjs_5,
+                     model.neighbors: neighbors,
+                     model.index_A: indexes_A, model.index_B: indexes_B,
+                     model.nei_index_A: nei_indexes_A, model.nei_index_B: nei_indexes_B,
+                     model.nei_A_mask: nei_masks_A, model.nei_B_mask: nei_masks_B,
+                     model.nei_L_A_mask: nei_masks_L_A, model.nei_L_T_mask: nei_masks_L_T,
+                     model.nei_is_in_A: nei_in_A, model.nei_is_in_B: nei_in_B}
+        return feed_dict, A_or_B, ground_truths, neg_samples
+    
+    
+def unpack_sessions(model, sessions, method, *args, mode="train"):
+    unpack_functions = {"TiSASRec": unpack_tisasrec_sessions, "CoNet": unpack_conet_sessions, "PINet": unpack_pinet_sessions, \
+        "MIFN": unpack_mifn_sessions}
+    return unpack_functions[method](model, sessions, *args, mode=mode)

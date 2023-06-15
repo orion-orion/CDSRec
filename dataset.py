@@ -3,7 +3,6 @@ import os
 import random
 import numpy as np
 import pickle
-from kg_utils import get_subgraph3, gen_mask, gen_index, load_kg
 
 
 class CDSDataSet(object):
@@ -255,45 +254,57 @@ class CDSDataSet(object):
         return prep_sessions
     
     def preprocess_mifn(self, dataset, mode="train"):
-        kg_file_path = os.path.join(self.data_dir, self.dataset, "knowledge_graph/%s_kg.npy" % mode)
-        kg = load_kg(kg_file_path)
-        
         sessions = []
         for idx, session in enumerate(dataset):
+            temp = []            
             if mode == "train":
                 session = self.leave_out_ground_A_and_ground_B(session, self.num_items_A)
                 items_input, ground_truth_A, ground_truth_B = session[:-2], session[-2], session[-1]
             else:
                 items_input, ground_truth = session[:-1], session[-1]
-                
-            temp = []
+                # If the ground truth is in domain A
+                if ground_truth < self.num_items_A:
+                    # Exclude the ground truth A when computing the sequence length of domain A
+                    self.seq_lens_A[idx] -= 1 
+                else: # If the ground truth is in domain B
+                    # Exclude the ground truth B when computing the sequence length of domain B
+                    self.seq_lens_B[idx] -= 1
 
+            # Separate items in domain A and items in domain B in the mixed sequence,
+            # and record the position of each item in domain A and domain B in the sequence:
+            # for items in domain A, record how many items in domain B are ahead of them;
+            # and items in domain B, record how many items in domain A are ahead of them
             seq_A, seq_B = [],[]
             pos_A, pos_B = [],[]
             index_A, index_B = [],[]
             len_A, len_B = 0,0
-            for idx, item in enumerate(items_input):  # All the items except ground truth
+            for item_idx, item in enumerate(items_input):  # All the items except ground truth
                 if item < self.num_items_A: # The item is in domain A
                     seq_A.append(item)
                     pos_A.append(len_B)
                     len_A += 1
-                    index_A.append(idx)
+                    index_A.append(item_idx)
                 else: # The item is in domain B
                     seq_B.append(item)
                     pos_B.append(len_A)
                     len_B += 1
-                    index_B.append(idx)
-                
-            _, _, _, _, _, nei_index_dict = get_subgraph3(items_input, kg, self.mifn_params["max_H"], self.mifn_params["max_nei"], self.num_items_A)
-                
-            nei_mask_A, nei_mask_B, _, _ = gen_mask(nei_index_dict, items_input, self.max_nei, self.num_items_A)
-            nei_index_A, nei_index_B, nei_is_in_A, nei_is_in_B = gen_index(nei_index_dict, self.max_nei, self.num_items_A, self.num_items_B)
+                    index_B.append(item_idx)
+
             temp.append(seq_A + [self.pad_int] * (self.max_seq_len_A - self.seq_lens_A[idx]))
             temp.append(seq_B + [self.pad_int] * (self.max_seq_len_B - self.seq_lens_B[idx]))
+            # For the padding elements in the sequence of domain B, we record the number of items in domain A ahead of them as 0;
+            # for the padding elements in the sequence of domain A, we record the number of items in domain B ahead of them as 0  
             temp.append(pos_A + [0] * (self.max_seq_len_A - self.seq_lens_A[idx]))
             temp.append(pos_B + [0] * (self.max_seq_len_B - self.seq_lens_B[idx]))
             temp.append(len_A)
             temp.append(len_B)
+            temp.append(index_A + [0] * (self.max_seq_len_A - self.seq_lens_A[idx]))
+            temp.append(index_B + [0] * (self.max_seq_len_B - self.seq_lens_B[idx]))
+            temp.append(np.random.randint(0, 2, (self.mifn_params["max_nei"], self.mifn_params["max_nei"])))
+            temp.append(np.random.randint(0, 2, (self.mifn_params["max_nei"], self.mifn_params["max_nei"])))
+            temp.append(np.random.randint(0, 2, (self.mifn_params["max_nei"], self.mifn_params["max_nei"])))
+            temp.append(np.random.randint(0, 2, (self.mifn_params["max_nei"], self.mifn_params["max_nei"])))
+            temp.append(np.random.randint(0, 2, (self.mifn_params["max_nei"], self.mifn_params["max_nei"])))
 
             if mode == "train":
                 temp.append(ground_truth_A)
@@ -314,34 +325,6 @@ class CDSDataSet(object):
                         neg_sample = self.random_neg(0, self.num_items_B, excl=[ground_truth - self.num_items_A])
                     neg_samples.append(neg_sample)   
                 temp.append(neg_samples)
-
-            temp.append(len_A + len_B)
-            temp.append(index_A + [0] * (self.max_seq_len_A - self.seq_lens_A[idx]))
-            temp.append(index_B + [0] * (self.max_seq_len_B - self.seq_lens_B[idx]))
-            temp.append(np.random.randint(0, 2, (self.max_nei, self.max_nei)))
-            temp.append(np.random.randint(0, 2, (self.max_nei, self.max_nei)))
-            temp.append(np.random.randint(0, 2, (self.max_nei, self.max_nei)))
-            temp.append(np.random.randint(0, 2, (self.max_nei, self.max_nei)))
-            temp.append(np.random.randint(0, 2,( self.max_nei, self.max_nei)))
-            temp.append(list(nei_index_dict.keys())) # Neighbors
-            temp.append(nei_index_A)
-            temp.append(nei_index_B)
-            temp.append(nei_mask_A)
-            temp.append(nei_mask_B)
-            temp.append(np.array([]))
-            temp.append(np.array([]))
-            temp.append(nei_is_in_A)
-            temp.append(nei_is_in_B)
-            
-            if mode == "train":
-                ground_A_in_nei = (1 if ground_truth_A in nei_index_dict.keys() else 0)
-                ground_B_in_nei = (1 if ground_truth_B - self.num_items_A in nei_index_dict.keys() else 0)
-                temp.append(ground_A_in_nei)
-                temp.append(ground_B_in_nei)    
-            else:
-                train = (1 if ground_truth in nei_index_dict.keys() else 0)
-                temp.append(train)
-
             sessions.append(temp)
         return sessions
     

@@ -9,6 +9,8 @@ import tensorflow as tf
 from dataset import CDSDataSet, Dataloader
 from tisasrec.tisasrec_model import TiSASRec
 from conet.conet_model import CoNet
+from pinet.pinet_model import PINet
+from mifn.mifn_model import MIFN
 from train_eval import train
 
 
@@ -89,8 +91,12 @@ def main():
         max_seq_len = max(train_dataset.max_seq_len, valid_dataset.max_seq_len, test_dataset.max_seq_len)
         model = TiSASRec(num_items_A + num_items_B, max_seq_len, args)
     elif args.method == "CoNet":
-        model = CoNet(num_users, num_items_A, num_items_B, args)      
-    
+        model = CoNet(num_users, num_items_A, num_items_B, args)  
+    elif args.method == "PINet":
+        model = PINet(num_items_A, num_items_B, args)
+    else:
+        model = MIFN(num_items_A, num_items_B, args)
+
     train(model, train_dataloader, valid_dataloader, test_dataloader, args)
 
 
